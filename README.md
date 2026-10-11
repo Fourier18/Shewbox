@@ -6,12 +6,17 @@ Chat with any model you have installed in Ollama. When a model supports tool cal
 
 ## Features
 
-- Works with any locally installed Ollama model, switchable from the sidebar
+- Works with locally installed Ollama models, selectable in Settings
 - Local image generation via ComfyUI/SDXL — no external API required
+- Edit an attached image with the local image model
 - Persistent chat history, saved locally and listed in the sidebar
-- Attach text files as context for a conversation
+- Attach text files as context or images to discuss or edit
 - Save any generated image to disk from the chat window
-- Light/dark theme switcher
+- Seven themes, selectable in Settings and remembered across launches
+
+## Themes
+
+Open the gear icon in Shewbox to choose **Light**, **Dark**, **Forest Green**, **Azure Night**, **Desert Sunset**, **Arctic Dawn**, or **Plum Midnight**. Shewbox saves your choice in `settings.json` beside the executable (or beside the source files when running from Python) and restores it on the next launch. Light is the default.
 
 ## Requirements
 
@@ -40,7 +45,7 @@ Chat with any model you have installed in Ollama. When a model supports tool cal
 pyinstaller --onefile --windowed --icon=shewbox.ico --add-data "shewbox.ico;." --name Shewbox qwen_image_app.py
 ```
 
-The built executable looks for `shewbox.ico` as a bundled resource and stores chat history next to itself, so it can be moved and run independently of the Python source.
+The built executable includes the app's Python code and icon. It stores chat history, generated images, and settings beside itself. Ollama and ComfyUI remain local dependencies for chat and image generation; place the ComfyUI installation beside the executable or in its parent folder for automatic startup.
 
 ## How it works
 
