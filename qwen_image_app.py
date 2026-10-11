@@ -17,6 +17,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 import tkinter as tk
 from tkinter import scrolledtext, font, filedialog, messagebox, simpledialog
 
@@ -134,6 +135,8 @@ class ChatApp:
         os.makedirs(HISTORY_DIR, exist_ok=True)
 
         self.messages = []
+        self._active_turns = {}
+        self._discarded_sessions = set()
         self.image_refs = []
         self.pending_attachment = None
         self._save_counter = 0
@@ -309,17 +312,19 @@ class ChatApp:
     def session_path(self, session_id):
         return os.path.join(HISTORY_DIR, f"{session_id}.json")
 
-    def save_session(self):
-        if not self.messages or not self.session_id:
+    def save_session(self, turn=None):
+        session_id = turn["id"] if turn else self.session_id
+        messages = turn["messages"] if turn else self.messages
+        if not messages or not session_id:
             return
         data = {
-            "id": self.session_id,
-            "title": self.session_title or "New chat",
-            "model": self.model_var.get(),
+            "id": session_id,
+            "title": (turn["title"] if turn else self.session_title) or "New chat",
+            "model": turn["model"] if turn else self.model_var.get(),
             "updated_at": time.time(),
-            "messages": [_msg_to_plain(m) for m in self.messages],
+            "messages": [_msg_to_plain(m) for m in messages],
         }
-        with open(self.session_path(self.session_id), "w", encoding="utf-8") as f:
+        with open(self.session_path(session_id), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         self.refresh_history_list()
 
@@ -369,7 +374,9 @@ class ChatApp:
             messagebox.showerror("Delete failed", str(e))
             return
         if sid == self.session_id:
-            self.new_chat()
+            self.new_chat(save_current=False)
+        if sid in self._active_turns:
+            self._discarded_sessions.add(sid)
         self.refresh_history_list()
 
     def rename_history_item(self):
@@ -392,9 +399,12 @@ class ChatApp:
             return
         if sid == self.session_id:
             self.session_title = new_title
+        if sid in self._active_turns:
+            self._active_turns[sid]["title"] = new_title
         self.refresh_history_list()
 
     def load_session(self, session_id):
+        self.save_session()
         try:
             with open(self.session_path(session_id), "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -403,15 +413,39 @@ class ChatApp:
             return
         self.session_id = data["id"]
         self.session_title = data.get("title", "New chat")
-        self.messages = data.get("messages", [])
+        self.pending_attachment = None
+        self.attach_bar.config(text="")
+        active = self._active_turns.get(session_id)
+        self.messages = active["messages"] if active else data.get("messages", [])
         if data.get("model") in self.available_models:
             self.model_var.set(data["model"])
 
+        self.render_messages()
+        self.send_btn.config(state="disabled" if active else "normal")
+        self.update_status()
+
+    def render_messages(self):
         self.chat_area.configure(state="normal")
         self.chat_area.delete("1.0", tk.END)
         self.chat_area.configure(state="disabled")
+        self.image_refs = []
         self.replay_messages()
-        self.update_status()
+
+    def refresh_turn_if_current(self, session_id):
+        if self.session_id == session_id:
+            self.render_messages()
+
+    def finish_turn(self, turn, error=None):
+        if turn["id"] not in self._discarded_sessions:
+            self.save_session(turn)
+        self._discarded_sessions.discard(turn["id"])
+        self._active_turns.pop(turn["id"], None)
+        if self.session_id == turn["id"]:
+            self.messages = turn["messages"]
+            self.render_messages()
+            if error:
+                self.append("error", f"Error: {error}")
+            self.send_btn.config(state="normal")
 
     def replay_messages(self):
         for m in self.messages:
@@ -428,14 +462,18 @@ class ChatApp:
             elif role == "assistant" and content:
                 self.append("assistant", content)
 
-    def new_chat(self):
-        self.save_session()
+    def new_chat(self, save_current=True):
+        if save_current:
+            self.save_session()
         self.messages = []
         self.session_id = None
         self.session_title = None
+        self.pending_attachment = None
+        self.attach_bar.config(text="")
         self.chat_area.configure(state="normal")
         self.chat_area.delete("1.0", tk.END)
         self.chat_area.configure(state="disabled")
+        self.send_btn.config(state="normal")
 
     # ---------- behavior ----------
 
@@ -526,13 +564,15 @@ class ChatApp:
             self.append("status", f"Saved to {dest}")
 
     def send(self):
+        if self.session_id in self._active_turns:
+            return
         text = self.input_box.get().strip()
         if not text and not self.pending_attachment:
             return
         self.input_box.delete(0, tk.END)
 
         if self.session_id is None:
-            self.session_id = str(int(time.time() * 1000))
+            self.session_id = uuid.uuid4().hex
             self.session_title = text[:48] + ("..." if len(text) > 48 else "")
 
         outgoing = text
@@ -565,40 +605,44 @@ class ChatApp:
         if outgoing_images:
             user_message["images"] = outgoing_images
         self.messages.append(user_message)
+        turn = {"id": self.session_id, "title": self.session_title,
+                "model": self.model_var.get(), "messages": self.messages}
+        self._active_turns[turn["id"]] = turn
         self.send_btn.config(state="disabled")
-        threading.Thread(target=self.run_turn, daemon=True).start()
+        threading.Thread(target=self.run_turn, args=(turn,), daemon=True).start()
 
-    def run_turn(self):
-        model = self.model_var.get()
+    def run_turn(self, turn):
+        model = turn["model"]
+        messages = turn["messages"]
+        error = None
         try:
             try:
-                response = ollama.chat(model=model, messages=self.messages, tools=TOOLS)
+                response = ollama.chat(model=model, messages=messages, tools=TOOLS)
             except Exception:
-                response = ollama.chat(model=model, messages=self.messages)
-            self.messages.append(response["message"])
+                response = ollama.chat(model=model, messages=messages)
+            messages.append(response["message"])
 
             if response["message"].get("tool_calls"):
-                self.root.after(0, self.append, "status", "Generating image locally, this can take a minute...")
+                self.root.after(0, self.show_status_if_current, turn["id"], "Generating image locally, this can take a minute...")
                 ollama.chat(model=model, messages=[], keep_alive=0)
 
                 for call in response["message"]["tool_calls"]:
                     fn_name = call["function"]["name"]
                     fn_args = call["function"]["arguments"]
                     result = AVAILABLE_FUNCTIONS[fn_name](**fn_args)
-                    self.messages.append({"role": "tool", "content": result, "name": fn_name})
-                    self.root.after(0, self.append, "assistant", "Here you go:", result)
+                    messages.append({"role": "tool", "content": result, "name": fn_name})
+                    self.root.after(0, self.refresh_turn_if_current, turn["id"])
 
-                final = ollama.chat(model=model, messages=self.messages)
-                self.messages.append(final["message"])
-                if final["message"].get("content"):
-                    self.root.after(0, self.append, "assistant", final["message"]["content"])
-            else:
-                self.root.after(0, self.append, "assistant", response["message"]["content"])
+                final = ollama.chat(model=model, messages=messages)
+                messages.append(final["message"])
         except Exception as e:
-            self.root.after(0, self.append, "error", f"Error: {e}")
+            error = str(e)
         finally:
-            self.root.after(0, lambda: self.send_btn.config(state="normal"))
-            self.root.after(0, self.save_session)
+            self.root.after(0, self.finish_turn, turn, error)
+
+    def show_status_if_current(self, session_id, status):
+        if self.session_id == session_id:
+            self.append("status", status)
 
 
 if __name__ == "__main__":
