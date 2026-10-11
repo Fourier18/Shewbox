@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import scrolledtext, font, filedialog, messagebox
+from tkinter import scrolledtext, font, filedialog, messagebox, simpledialog
 
 from PIL import Image, ImageTk
 
@@ -39,6 +39,7 @@ else:
 HISTORY_DIR = os.path.join(DATA_DIR, "chat_history")
 ICON_PATH = os.path.join(RESOURCE_DIR, "shewbox.ico")
 TEXT_FILE_EXTENSIONS = {".txt", ".md", ".py", ".json", ".csv", ".log", ".yaml", ".yml", ".html", ".js", ".ts", ".css"}
+IMAGE_FILE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 MAX_ATTACHMENT_CHARS = 12000
 
 THEMES = {
@@ -136,6 +137,7 @@ class ChatApp:
         self.image_refs = []
         self.pending_attachment = None
         self._save_counter = 0
+        self._vision_capable_cache = {}
         self._settings = _load_settings()
         self.theme_name = self._settings.get("theme") if self._settings.get("theme") in THEMES else DEFAULT_THEME
         self.session_id = None
@@ -186,6 +188,10 @@ class ChatApp:
                                         font=(self.base_font.actual("family"), 10), highlightthickness=0, borderwidth=0)
         self.history_list.pack(fill=tk.BOTH, expand=True)
         self.history_list.bind("<<ListboxSelect>>", self.on_history_select)
+        self.history_list.bind("<Button-3>", self.show_history_context_menu)
+        self.history_menu = tk.Menu(self.history_list, tearoff=0)
+        self.history_menu.add_command(label="Rename", command=self.rename_history_item)
+        self.history_menu.add_command(label="Delete", command=self.delete_history_item)
 
         self.status_line = tk.Label(self.sidebar, text="", font=(self.base_font.actual("family"), 8),
                                      wraplength=230, justify="left")
@@ -273,6 +279,8 @@ class ChatApp:
 
         self.history_list.configure(bg=t["panel_bg"], fg=t["text"], selectbackground=t["accent"],
                                      selectforeground=t["on_accent"], highlightthickness=0)
+        self.history_menu.configure(bg=t["panel_bg"], fg=t["text"], activebackground=t["accent"],
+                                     activeforeground=t["on_accent"])
 
         self.chat_area.configure(bg=t["output_bg"], fg=t["text"], insertbackground=t["text"],
                                   selectbackground=t["accent"], selectforeground=t["on_accent"])
@@ -339,6 +347,53 @@ class ChatApp:
         sid = self._history_ids[sel[0]]
         self.load_session(sid)
 
+    def show_history_context_menu(self, event):
+        index = self.history_list.nearest(event.y)
+        if index < 0 or index >= len(self._history_ids):
+            return
+        self.history_list.selection_clear(0, tk.END)
+        self.history_list.selection_set(index)
+        self.history_menu.tk_popup(event.x_root, event.y_root)
+
+    def delete_history_item(self):
+        sel = self.history_list.curselection()
+        if not sel:
+            return
+        sid = self._history_ids[sel[0]]
+        title = self.history_list.get(sel[0])
+        if not messagebox.askyesno("Delete chat", f'Delete "{title}"? This can\'t be undone.'):
+            return
+        try:
+            os.remove(self.session_path(sid))
+        except Exception as e:
+            messagebox.showerror("Delete failed", str(e))
+            return
+        if sid == self.session_id:
+            self.new_chat()
+        self.refresh_history_list()
+
+    def rename_history_item(self):
+        sel = self.history_list.curselection()
+        if not sel:
+            return
+        sid = self._history_ids[sel[0]]
+        old_title = self.history_list.get(sel[0])
+        new_title = simpledialog.askstring("Rename chat", "New name:", initialvalue=old_title, parent=self.root)
+        if not new_title or new_title == old_title:
+            return
+        try:
+            with open(self.session_path(sid), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["title"] = new_title
+            with open(self.session_path(sid), "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            messagebox.showerror("Rename failed", str(e))
+            return
+        if sid == self.session_id:
+            self.session_title = new_title
+        self.refresh_history_list()
+
     def load_session(self, session_id):
         try:
             with open(self.session_path(session_id), "r", encoding="utf-8") as f:
@@ -363,7 +418,9 @@ class ChatApp:
             role = m.get("role")
             content = m.get("content") or ""
             if role == "user":
-                self.append("user", content)
+                images = m.get("images") or []
+                img_path = images[0] if images and os.path.exists(images[0]) else None
+                self.append("user", content, img_path)
             elif role == "tool":
                 path = content
                 if os.path.exists(path):
@@ -386,6 +443,15 @@ class ChatApp:
         self.update_status()
         self.append("status", f"Switched to {self.model_var.get()}")
 
+    def _model_is_vision_capable(self, model):
+        if model not in self._vision_capable_cache:
+            try:
+                info = ollama.show(model)
+                self._vision_capable_cache[model] = "vision" in (info.capabilities or [])
+            except Exception:
+                self._vision_capable_cache[model] = False
+        return self._vision_capable_cache[model]
+
     def attach_file(self):
         path = filedialog.askopenfilename(title="Attach a file")
         if not path:
@@ -399,13 +465,18 @@ class ChatApp:
             except Exception as e:
                 messagebox.showerror("Attach failed", str(e))
                 return
-            self.pending_attachment = (name, content)
+            self.pending_attachment = {"kind": "text", "name": name, "content": content}
             self.attach_bar.config(text=f"\U0001F4CE {name} will be sent as context with your next message")
+        elif ext in IMAGE_FILE_EXTENSIONS:
+            self.pending_attachment = {"kind": "image", "name": name, "path": path}
+            self.attach_bar.config(
+                text=f"\U0001F5BC {name} will be sent with your next message — ask to edit it or ask about it"
+            )
         else:
             messagebox.showinfo(
                 "Can't read this file",
-                f"{name} isn't a text file this model can read (no vision/file-parsing capability). "
-                "Attach a .txt, .md, .py, .json, .csv or similar text file instead.",
+                f"{name} isn't a file type this app can read. "
+                "Attach a photo (.png, .jpg, .webp, ...) or a text file (.txt, .md, .py, .json, .csv, ...) instead.",
             )
 
     def append(self, who, text, image_path=None):
@@ -465,17 +536,35 @@ class ChatApp:
             self.session_title = text[:48] + ("..." if len(text) > 48 else "")
 
         outgoing = text
+        outgoing_images = None
         if self.pending_attachment:
-            name, content = self.pending_attachment
-            self.append("user", f"\U0001F4CE {name}")
-            outgoing = f"[Attached file: {name}]\n{content}\n\n{text}".strip()
+            attachment = self.pending_attachment
             self.pending_attachment = None
             self.attach_bar.config(text="")
+
+            if attachment["kind"] == "text":
+                name, content = attachment["name"], attachment["content"]
+                self.append("user", f"\U0001F4CE {name}")
+                outgoing = f"[Attached file: {name}]\n{content}\n\n{text}".strip()
+            else:
+                name, path = attachment["name"], attachment["path"]
+                self.append("user", f"\U0001F5BC {name}", image_path=path)
+                outgoing = (
+                    f"[Attached photo at path: {path}]\n"
+                    "(Use this exact path if calling edit_image to modify this photo.)\n\n"
+                    f"{text}"
+                ).strip()
+
+                if self._model_is_vision_capable(self.model_var.get()):
+                    outgoing_images = [path]
 
         if text:
             self.append("user", text)
 
-        self.messages.append({"role": "user", "content": outgoing})
+        user_message = {"role": "user", "content": outgoing}
+        if outgoing_images:
+            user_message["images"] = outgoing_images
+        self.messages.append(user_message)
         self.send_btn.config(state="disabled")
         threading.Thread(target=self.run_turn, daemon=True).start()
 

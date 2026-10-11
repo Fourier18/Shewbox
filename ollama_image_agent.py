@@ -1,9 +1,10 @@
 """
-Core LLM driver (qwen3:8b via Ollama) with a generate_image tool.
+Core LLM driver (qwen3:8b via Ollama) with generate_image and edit_image tools.
 
-The LLM never touches pixels. When it decides an image is needed, it calls
-generate_image(), which sends a workflow to a local ComfyUI server (SDXL
-running on your own GPU) and returns the saved file path.
+The LLM never touches pixels directly. When it decides an image is needed, it
+calls generate_image() (text-to-image) or edit_image() (image-to-image, for
+a photo the user attached), which send a workflow to a local ComfyUI server
+(SDXL running on your own GPU) and return the saved file path.
 
 Requires:
   - Ollama running locally with qwen3:8b pulled (already done)
@@ -12,11 +13,15 @@ Requires:
 """
 
 import json
+import mimetypes
 import os
 import random
+import subprocess
 import sys
+import threading
 import time
 import urllib.request
+import uuid
 
 import ollama
 
@@ -30,13 +35,87 @@ else:
 OUTPUT_DIR = os.path.join(_DATA_DIR, "generated_images")
 
 MODEL = "qwen3:8b"
+_comfy_start_lock = threading.Lock()
+
+
+def _comfy_ready():
+    try:
+        with urllib.request.urlopen(f"{COMFY_URL}/system_stats", timeout=2) as response:
+            return response.status == 200
+    except (OSError, TimeoutError):
+        return False
+
+
+def ensure_comfy_running():
+    """Start the adjacent ComfyUI installation when image generation needs it."""
+    if _comfy_ready():
+        return
+    with _comfy_start_lock:
+        if _comfy_ready():
+            return
+        candidates = [
+            os.environ.get("SHEWBOX_COMFYUI_DIR"),
+            os.path.join(_DATA_DIR, "ComfyUI"),
+            os.path.join(os.path.dirname(_DATA_DIR), "ComfyUI"),
+        ]
+        comfy_dir = next((p for p in candidates if p and os.path.isfile(os.path.join(p, "main.py"))
+                          and os.path.isfile(os.path.join(p, "venv", "Scripts", "python.exe"))), None)
+        if comfy_dir is None:
+            raise RuntimeError("The local image engine is missing. Keep the ComfyUI folder beside Shewbox.exe or in its parent folder.")
+        python = os.path.join(comfy_dir, "venv", "Scripts", "python.exe")
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            process = subprocess.Popen(
+                [python, "main.py", "--lowvram"], cwd=comfy_dir,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, creationflags=flags,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"The local image engine could not start: {exc}") from exc
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if _comfy_ready():
+                return
+            if process.poll() is not None:
+                raise RuntimeError("The local image engine closed during startup. Check the ComfyUI installation.")
+            time.sleep(2)
+        raise RuntimeError("The local image engine did not become ready within two minutes.")
 
 
 def _comfy_post(path: str, payload: dict) -> dict:
+    ensure_comfy_running()
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(f"{COMFY_URL}{path}", data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())
+
+
+def _comfy_upload_image(local_path: str) -> str:
+    """Upload a local photo to ComfyUI's own input store via its HTTP API and
+    return the filename to reference from a LoadImage node. Going through the
+    API (instead of guessing where ComfyUI's input/ folder lives on disk) is
+    what makes this work whether this script is run directly or bundled into
+    the Shewbox .exe, whose own folder is not where ComfyUI is installed."""
+    ensure_comfy_running()
+    boundary = uuid.uuid4().hex
+    filename = os.path.basename(local_path)
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    with open(local_path, "rb") as f:
+        file_bytes = f.read()
+
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{COMFY_URL}/upload/image",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())["name"]
 
 
 def _comfy_get(path: str) -> dict:
@@ -73,14 +152,12 @@ def _build_workflow(prompt: str, negative_prompt: str, width: int, height: int, 
     }
 
 
-def generate_image(prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024) -> str:
-    """Send a prompt to the local ComfyUI/SDXL backend and return the saved image path."""
-    seed = random.randint(0, 2**31 - 1)
-    workflow = _build_workflow(prompt, negative_prompt, width, height, seed)
+def _run_workflow(workflow: dict) -> str:
+    """Submit a workflow to ComfyUI, wait for it to finish, and return the saved local path."""
     result = _comfy_post("/prompt", {"prompt": workflow})
     prompt_id = result["prompt_id"]
 
-    for _ in range(300):  # up to 5 minutes
+    for _ in range(900):  # up to 15 minutes — cold GPU starts on this card have taken 400s+
         history = _comfy_get(f"/history/{prompt_id}")
         if prompt_id in history:
             outputs = history[prompt_id]["outputs"]
@@ -89,14 +166,64 @@ def generate_image(prompt: str, negative_prompt: str = "", width: int = 1024, he
                     img = node_output["images"][0]
                     url = f"{COMFY_URL}/view?filename={img['filename']}&subfolder={img['subfolder']}&type={img['type']}"
                     local_path = f"{OUTPUT_DIR}/{img['filename']}"
-                    import os
-
                     os.makedirs(OUTPUT_DIR, exist_ok=True)
                     urllib.request.urlretrieve(url, local_path)
                     return local_path
         time.sleep(1)
 
     raise TimeoutError("ComfyUI did not finish generating the image in time.")
+
+
+def generate_image(prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024) -> str:
+    """Send a prompt to the local ComfyUI/SDXL backend and return the saved image path."""
+    seed = random.randint(0, 2**31 - 1)
+    workflow = _build_workflow(prompt, negative_prompt, width, height, seed)
+    return _run_workflow(workflow)
+
+
+def _build_img2img_workflow(image_filename: str, prompt: str, negative_prompt: str, denoise: float, seed: int) -> dict:
+    return {
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "cfg": 7.0,
+                "denoise": denoise,
+                "latent_image": ["11", 0],
+                "model": ["4", 0],
+                "negative": ["7", 0],
+                "positive": ["6", 0],
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "seed": seed,
+                "steps": 25,
+            },
+        },
+        "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CHECKPOINT_NAME}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": prompt}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": negative_prompt}},
+        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "agent_edit", "images": ["8", 0]}},
+        "10": {"class_type": "LoadImage", "inputs": {"image": image_filename}},
+        "11": {"class_type": "VAEEncode", "inputs": {"pixels": ["10", 0], "vae": ["4", 2]}},
+    }
+
+
+def edit_image(image_path: str, prompt: str, negative_prompt: str = "", denoise: float = 0.6) -> str:
+    """Transform an existing photo through the local SDXL model using img2img and return the saved file path.
+
+    image_path must be a path to a photo already attached in this conversation.
+    denoise controls how much the source photo changes: close to 0 keeps it
+    almost untouched, close to 1 treats it as little more than a rough sketch.
+    """
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(f"No such attached image: {image_path}")
+
+    staged_name = _comfy_upload_image(image_path)
+
+    seed = random.randint(0, 2**31 - 1)
+    denoise = max(0.05, min(1.0, denoise))
+    workflow = _build_img2img_workflow(staged_name, prompt, negative_prompt, denoise, seed)
+    return _run_workflow(workflow)
 
 
 TOOLS = [
@@ -116,10 +243,40 @@ TOOLS = [
                 "required": ["prompt"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_image",
+            "description": (
+                "Edit or restyle a photo the user attached to this conversation, using the local SDXL model "
+                "(img2img). Use this when the user asks to change, edit, restyle, or transform an attached "
+                "photo rather than create a brand new one from scratch."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "File path of the attached photo to edit, exactly as given in the conversation.",
+                    },
+                    "prompt": {"type": "string", "description": "Description of the change to make to the photo."},
+                    "negative_prompt": {"type": "string", "description": "Things to avoid in the result."},
+                    "denoise": {
+                        "type": "number",
+                        "description": (
+                            "How much to change the photo, from 0 to 1. Low (0.2-0.4) keeps it close to the "
+                            "original, e.g. minor touch-ups. High (0.6-0.9) allows major changes. Default 0.6."
+                        ),
+                    },
+                },
+                "required": ["image_path", "prompt"],
+            },
+        },
+    },
 ]
 
-AVAILABLE_FUNCTIONS = {"generate_image": generate_image}
+AVAILABLE_FUNCTIONS = {"generate_image": generate_image, "edit_image": edit_image}
 
 
 def chat_loop():

@@ -29,8 +29,7 @@ Chat with any model you have installed in Ollama. When a model supports tool cal
    pip install ollama pillow
    ```
 4. Edit `ollama_image_agent.py` if your checkpoint filename differs from `sd_xl_base_1.0.safetensors`.
-5. Start ComfyUI (`python main.py` from the ComfyUI folder, or use `start_comfyui.ps1` as a reference).
-6. Run the app:
+5. Run the app. Image generation starts the local ComfyUI engine automatically when needed. Keep the `ComfyUI` folder beside `Shewbox.exe` or in its parent folder (or set `SHEWBOX_COMFYUI_DIR` to its location).
    ```
    python qwen_image_app.py
    ```
