@@ -379,7 +379,6 @@ class ChatApp:
         self.chat_area.configure(state="normal")
         self.chat_area.delete("1.0", tk.END)
         self.chat_area.configure(state="disabled")
-        self.append("assistant", f"New chat on {self.model_var.get()}.")
 
     # ---------- behavior ----------
 
