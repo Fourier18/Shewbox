@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+chat_history/
+generated_images/
+.venv/
+venv/
