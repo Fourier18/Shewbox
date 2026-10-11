@@ -222,6 +222,7 @@ class ChatApp:
             return
         t = THEMES[self.theme_name]
         win = tk.Toplevel(self.root)
+        win.transient(self.root)
         win.title("Settings")
         win.geometry("320x220")
         win.configure(bg=t["bg"])
