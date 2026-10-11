@@ -42,7 +42,7 @@ TEXT_FILE_EXTENSIONS = {".txt", ".md", ".py", ".json", ".csv", ".log", ".yaml", 
 MAX_ATTACHMENT_CHARS = 12000
 
 THEMES = {
-    "Default Light": {
+    "Light": {
         "bg": "#ffffff", "panel_bg": "#f7f7f8", "border": "#e2e2e5", "control_border": "#8c8c93",
         "text": "#1c1c1f", "text_dim": "#6b6b73", "accent": "#2563eb", "on_accent": "#ffffff",
         "output_bg": "#ffffff", "error": "#b3261e",
@@ -78,7 +78,25 @@ THEMES = {
         "output_bg": "#1c1524", "error": "#ff7a8a",
     },
 }
-DEFAULT_THEME = "Default Light"
+DEFAULT_THEME = "Light"
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+
+
+def _load_settings():
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_settings(data):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
 
 
 def _msg_to_plain(m):
@@ -118,7 +136,8 @@ class ChatApp:
         self.image_refs = []
         self.pending_attachment = None
         self._save_counter = 0
-        self.theme_name = DEFAULT_THEME
+        self._settings = _load_settings()
+        self.theme_name = self._settings.get("theme") if self._settings.get("theme") in THEMES else DEFAULT_THEME
         self.session_id = None
         self.session_title = None
         self.base_font = font.Font(family="Segoe UI", size=11)
@@ -129,13 +148,11 @@ class ChatApp:
         except Exception:
             self.available_models = ["qwen3:8b"]
         self.model_var = tk.StringVar(value=self.available_models[0] if self.available_models else "qwen3:8b")
-        self.theme_var = tk.StringVar(value=DEFAULT_THEME)
+        self.theme_var = tk.StringVar(value=self.theme_name)
 
         self._build_layout()
-        self.apply_theme(DEFAULT_THEME)
+        self.apply_theme(self.theme_name)
         self.refresh_history_list()
-        self.append("assistant", f"Ready on {self.model_var.get()}. Ask for anything - if the model supports "
-                                  f"tool calling and it's an image, I'll generate it locally.")
 
     # ---------- layout ----------
 
@@ -238,6 +255,8 @@ class ChatApp:
         t = THEMES[name]
         self.theme_name = name
         self.theme_var.set(name)
+        self._settings["theme"] = name
+        _save_settings(self._settings)
         self.root.configure(bg=t["bg"])
         self.sidebar.configure(bg=t["panel_bg"])
         self.main.configure(bg=t["bg"])

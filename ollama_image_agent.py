@@ -12,7 +12,9 @@ Requires:
 """
 
 import json
+import os
 import random
+import sys
 import time
 import urllib.request
 
@@ -20,7 +22,12 @@ import ollama
 
 COMFY_URL = "http://127.0.0.1:8188"
 CHECKPOINT_NAME = "sd_xl_base_1.0.safetensors"
-OUTPUT_DIR = "generated_images"
+
+if getattr(sys, "frozen", False):
+    _DATA_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    _DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(_DATA_DIR, "generated_images")
 
 MODEL = "qwen3:8b"
 
