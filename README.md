@@ -4,6 +4,12 @@ A local desktop chat app for [Ollama](https://ollama.com) models, extended with 
 
 Chat with any model you have installed in Ollama. When a model supports tool calling and you ask for an image, it can call a `generate_image` tool that renders through a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) + Stable Diffusion backend and shows the result inline in the chat.
 
+## Download the Windows app
+
+Download [Shewbox for Windows](https://github.com/Fourier18/Shewbox/releases/latest/download/Shewbox-Windows-x64.zip), extract the ZIP to a folder you can write to, and double-click `Shewbox.exe`. The icon is built into the app; Python is not required to run this download.
+
+Shewbox needs [Ollama](https://ollama.com) running with a model that supports tool calling. Image creation also needs a local ComfyUI installation with the SDXL checkpoint named `sd_xl_base_1.0.safetensors`. Put the `ComfyUI` folder beside `Shewbox.exe` (or in its parent folder); it must contain `main.py` and `venv/Scripts/python.exe`. Shewbox starts it automatically when an image is requested. The executable does not include Ollama, ComfyUI, or the multi-gigabyte model.
+
 ## Features
 
 - Works with locally installed Ollama models, selectable in Settings
@@ -25,7 +31,7 @@ Open the gear icon in Shewbox to choose **Light**, **Dark**, **Forest Green**, *
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) installed locally, with an SDXL checkpoint in `ComfyUI/models/checkpoints`
 - Python 3.10+ (only needed if running from source rather than a built executable)
 
-## Setup
+## Run from source
 
 1. Install Ollama and pull a model that supports tool calling.
 2. Install ComfyUI and place an SDXL checkpoint in its `models/checkpoints` folder.
@@ -34,7 +40,7 @@ Open the gear icon in Shewbox to choose **Light**, **Dark**, **Forest Green**, *
    pip install ollama pillow
    ```
 4. Edit `ollama_image_agent.py` if your checkpoint filename differs from `sd_xl_base_1.0.safetensors`.
-5. Run the app. Image generation starts the local ComfyUI engine automatically when needed. Keep the `ComfyUI` folder beside `Shewbox.exe` or in its parent folder (or set `SHEWBOX_COMFYUI_DIR` to its location).
+5. Run the app. Image generation starts the local ComfyUI engine automatically when needed. Keep the `ComfyUI` folder beside `qwen_image_app.py` or in its parent folder (or set `SHEWBOX_COMFYUI_DIR` to its location).
    ```
    python qwen_image_app.py
    ```
