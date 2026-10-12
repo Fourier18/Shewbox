@@ -157,9 +157,13 @@ def _run_workflow(workflow: dict) -> str:
     result = _comfy_post("/prompt", {"prompt": workflow})
     prompt_id = result["prompt_id"]
 
-    for _ in range(900):  # up to 15 minutes — cold GPU starts on this card have taken 400s+
+    deadline = time.monotonic() + 3600  # Low-VRAM renders on this machine can exceed 20 minutes.
+    while time.monotonic() < deadline:
         history = _comfy_get(f"/history/{prompt_id}")
         if prompt_id in history:
+            status = history[prompt_id].get("status", {})
+            if status.get("status_str") == "error":
+                raise RuntimeError("The local image engine failed while generating this image.")
             outputs = history[prompt_id]["outputs"]
             for node_output in outputs.values():
                 if "images" in node_output:
@@ -169,9 +173,9 @@ def _run_workflow(workflow: dict) -> str:
                     os.makedirs(OUTPUT_DIR, exist_ok=True)
                     urllib.request.urlretrieve(url, local_path)
                     return local_path
-        time.sleep(1)
+        time.sleep(2)
 
-    raise TimeoutError("ComfyUI did not finish generating the image in time.")
+    raise TimeoutError("The local image engine did not finish within one hour.")
 
 
 def generate_image(prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024) -> str:
