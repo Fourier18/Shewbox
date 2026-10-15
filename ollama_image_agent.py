@@ -16,6 +16,7 @@ import json
 import mimetypes
 import os
 import random
+import shutil
 import subprocess
 import sys
 import threading
@@ -26,6 +27,7 @@ import uuid
 import ollama
 
 COMFY_URL = "http://127.0.0.1:8188"
+OLLAMA_URL = "http://127.0.0.1:11434"
 CHECKPOINT_NAME = "sd_xl_base_1.0.safetensors"
 
 if getattr(sys, "frozen", False):
@@ -36,6 +38,51 @@ OUTPUT_DIR = os.path.join(_DATA_DIR, "generated_images")
 
 MODEL = "qwen3:8b"
 _comfy_start_lock = threading.Lock()
+_ollama_start_lock = threading.Lock()
+
+
+def _ollama_ready():
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/version", timeout=2) as response:
+            return response.status == 200
+    except (OSError, TimeoutError):
+        return False
+
+
+def ensure_ollama_running():
+    """Start the local Ollama service when it isn't already running.
+
+    Built to close a real gap: Shewbox auto-starts ComfyUI (see
+    ensure_comfy_running below) but, until this was added, never did the
+    same for Ollama itself -- it just assumed the service was already up
+    and showed a connection error if it wasn't, even though starting it
+    is as simple as running the same `ollama` binary the official app uses.
+    """
+    if _ollama_ready():
+        return
+    with _ollama_start_lock:
+        if _ollama_ready():
+            return
+        exe = os.environ.get("SHEWBOX_OLLAMA_EXE") or shutil.which("ollama")
+        if exe is None:
+            raise RuntimeError("Ollama is not installed or not on PATH. Get it from https://ollama.com/download.")
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            process = subprocess.Popen(
+                [exe, "serve"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, creationflags=flags,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Ollama could not start: {exc}") from exc
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if _ollama_ready():
+                return
+            if process.poll() is not None:
+                raise RuntimeError("Ollama closed during startup.")
+            time.sleep(1)
+        raise RuntimeError("Ollama did not become ready within 30 seconds.")
 
 
 def _comfy_ready():
@@ -290,6 +337,7 @@ def chat_loop():
         user_input = input("you> ")
         messages.append({"role": "user", "content": user_input})
 
+        ensure_ollama_running()
         response = ollama.chat(model=MODEL, messages=messages, tools=TOOLS)
         messages.append(response["message"])
 

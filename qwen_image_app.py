@@ -24,7 +24,7 @@ from tkinter import scrolledtext, font, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
 
 import ollama
-from ollama_image_agent import TOOLS, AVAILABLE_FUNCTIONS
+from ollama_image_agent import TOOLS, AVAILABLE_FUNCTIONS, ensure_ollama_running
 
 APP_TITLE = "Shewbox"
 
@@ -149,6 +149,7 @@ class ChatApp:
         self.settings_win = None
 
         try:
+            ensure_ollama_running()
             self.available_models = [m.model for m in ollama.list().models]
         except Exception:
             self.available_models = ["qwen3:8b"]
@@ -616,6 +617,7 @@ class ChatApp:
         messages = turn["messages"]
         error = None
         try:
+            ensure_ollama_running()
             try:
                 response = ollama.chat(model=model, messages=messages, tools=TOOLS)
             except Exception:
