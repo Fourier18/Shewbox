@@ -637,9 +637,9 @@ class ChatApp:
         try:
             ensure_ollama_running()
             try:
-                response = ollama.chat(model=model, messages=messages, tools=tools)
+                response = ollama.chat(model=model, messages=messages, tools=tools, think=False)
             except Exception:
-                response = ollama.chat(model=model, messages=messages)
+                response = ollama.chat(model=model, messages=messages, think=False)
             messages.append(response["message"])
 
             if response["message"].get("tool_calls"):
@@ -653,7 +653,7 @@ class ChatApp:
                     messages.append({"role": "tool", "content": result, "name": fn_name})
                     self.root.after(0, self.refresh_turn_if_current, turn["id"])
 
-                final = ollama.chat(model=model, messages=messages)
+                final = ollama.chat(model=model, messages=messages, think=False)
                 messages.append(final["message"])
         except Exception as e:
             error = str(e)
