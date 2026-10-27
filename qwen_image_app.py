@@ -155,6 +155,7 @@ class ChatApp:
             self.available_models = ["qwen3:8b"]
         self.model_var = tk.StringVar(value=self.available_models[0] if self.available_models else "qwen3:8b")
         self.theme_var = tk.StringVar(value=self.theme_name)
+        self.image_tools_var = tk.BooleanVar(value=self._settings.get("image_tools_enabled", True))
 
         self._build_layout()
         self.apply_theme(self.theme_name)
@@ -234,7 +235,7 @@ class ChatApp:
         win = tk.Toplevel(self.root)
         win.transient(self.root)
         win.title("Settings")
-        win.geometry("320x220")
+        win.geometry("320x260")
         win.configure(bg=t["bg"])
         self.settings_win = win
         if os.path.exists(ICON_PATH):
@@ -259,6 +260,18 @@ class ChatApp:
                            highlightbackground=t["control_border"])
         theme_menu["menu"].configure(bg=t["bg"], fg=t["text"])
         theme_menu.pack(fill=tk.X, padx=16)
+
+        image_tools_check = tk.Checkbutton(
+            win, text="Enable image tools (generate/edit via ComfyUI)",
+            variable=self.image_tools_var, command=self.on_image_tools_toggle,
+            bg=t["bg"], fg=t["text"], activebackground=t["bg"], activeforeground=t["text"],
+            selectcolor=t["bg"], font=self.base_font, anchor="w",
+        )
+        image_tools_check.pack(fill=tk.X, padx=16, pady=(14, 4))
+
+    def on_image_tools_toggle(self):
+        self._settings["image_tools_enabled"] = self.image_tools_var.get()
+        _save_settings(self._settings)
 
     # ---------- theming ----------
 
@@ -590,11 +603,14 @@ class ChatApp:
             else:
                 name, path = attachment["name"], attachment["path"]
                 self.append("user", f"\U0001F5BC {name}", image_path=path)
-                outgoing = (
-                    f"[Attached photo at path: {path}]\n"
-                    "(Use this exact path if calling edit_image to modify this photo.)\n\n"
-                    f"{text}"
-                ).strip()
+                if self.image_tools_var.get():
+                    outgoing = (
+                        f"[Attached photo at path: {path}]\n"
+                        "(Use this exact path if calling edit_image to modify this photo.)\n\n"
+                        f"{text}"
+                    ).strip()
+                else:
+                    outgoing = f"[Attached photo: {name}]\n\n{text}".strip()
 
                 if self._model_is_vision_capable(self.model_var.get()):
                     outgoing_images = [path]
@@ -607,7 +623,8 @@ class ChatApp:
             user_message["images"] = outgoing_images
         self.messages.append(user_message)
         turn = {"id": self.session_id, "title": self.session_title,
-                "model": self.model_var.get(), "messages": self.messages}
+                "model": self.model_var.get(), "messages": self.messages,
+                "image_tools": self.image_tools_var.get()}
         self._active_turns[turn["id"]] = turn
         self.send_btn.config(state="disabled")
         threading.Thread(target=self.run_turn, args=(turn,), daemon=True).start()
@@ -615,11 +632,12 @@ class ChatApp:
     def run_turn(self, turn):
         model = turn["model"]
         messages = turn["messages"]
+        tools = TOOLS if turn.get("image_tools", True) else None
         error = None
         try:
             ensure_ollama_running()
             try:
-                response = ollama.chat(model=model, messages=messages, tools=TOOLS)
+                response = ollama.chat(model=model, messages=messages, tools=tools)
             except Exception:
                 response = ollama.chat(model=model, messages=messages)
             messages.append(response["message"])
