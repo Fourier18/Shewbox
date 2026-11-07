@@ -172,11 +172,11 @@ class ChatApp:
         self.main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # --- sidebar header: title + gear ---
-        header = tk.Frame(self.sidebar)
-        header.pack(fill=tk.X, padx=14, pady=(16, 10))
-        self.lbl_title = tk.Label(header, text=APP_TITLE, font=(self.base_font.actual("family"), 15, "bold"))
+        self.header = tk.Frame(self.sidebar)
+        self.header.pack(fill=tk.X, padx=14, pady=(16, 10))
+        self.lbl_title = tk.Label(self.header, text=APP_TITLE, font=(self.base_font.actual("family"), 15, "bold"))
         self.lbl_title.pack(side=tk.LEFT)
-        self.gear_btn = tk.Button(header, text="⚙", command=self.open_settings, relief="flat",
+        self.gear_btn = tk.Button(self.header, text="⚙", command=self.open_settings, relief="flat",
                                    font=(self.base_font.actual("family"), 12), padx=6)
         self.gear_btn.pack(side=tk.RIGHT)
 
@@ -187,9 +187,9 @@ class ChatApp:
         self.lbl_history = tk.Label(self.sidebar, text="CHATS", font=(self.base_font.actual("family"), 8, "bold"))
         self.lbl_history.pack(anchor="w", padx=14, pady=(0, 4))
 
-        hist_frame = tk.Frame(self.sidebar)
-        hist_frame.pack(fill=tk.BOTH, expand=True, padx=10)
-        self.history_list = tk.Listbox(hist_frame, relief="flat", activestyle="none",
+        self.hist_frame = tk.Frame(self.sidebar)
+        self.hist_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+        self.history_list = tk.Listbox(self.hist_frame, relief="flat", activestyle="none",
                                         font=(self.base_font.actual("family"), 10), highlightthickness=0, borderwidth=0)
         self.history_list.pack(fill=tk.BOTH, expand=True)
         self.history_list.bind("<<ListboxSelect>>", self.on_history_select)
@@ -213,18 +213,18 @@ class ChatApp:
         self.attach_bar = tk.Label(self.main, text="", font=(self.base_font.actual("family"), 9))
         self.attach_bar.pack(fill=tk.X, padx=14)
 
-        input_frame = tk.Frame(self.main)
-        input_frame.pack(fill=tk.X, padx=10, pady=10)
+        self.input_frame = tk.Frame(self.main)
+        self.input_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        self.attach_btn = tk.Button(input_frame, text="\U0001F4CE", command=self.attach_file,
+        self.attach_btn = tk.Button(self.input_frame, text="\U0001F4CE", command=self.attach_file,
                                      relief="flat", font=self.base_font, padx=10)
         self.attach_btn.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.input_box = tk.Entry(input_frame, font=self.base_font, relief="flat")
+        self.input_box = tk.Entry(self.input_frame, font=self.base_font, relief="flat")
         self.input_box.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, padx=(0, 8))
         self.input_box.bind("<Return>", lambda e: self.send())
 
-        self.send_btn = tk.Button(input_frame, text="Send", command=self.send, relief="flat", padx=16, font=self.base_font)
+        self.send_btn = tk.Button(self.input_frame, text="Send", command=self.send, relief="flat", padx=16, font=self.base_font)
         self.send_btn.pack(side=tk.RIGHT)
 
     def open_settings(self):
@@ -285,7 +285,7 @@ class ChatApp:
         self.sidebar.configure(bg=t["panel_bg"])
         self.main.configure(bg=t["bg"])
 
-        for w in (self.lbl_title, self.gear_btn, self.lbl_history):
+        for w in (self.header, self.hist_frame, self.lbl_title, self.gear_btn, self.lbl_history):
             w.configure(bg=t["panel_bg"])
         self.lbl_title.configure(fg=t["text"])
         self.gear_btn.configure(fg=t["text"], activebackground=t["accent"])
@@ -310,6 +310,7 @@ class ChatApp:
         self.chat_area.tag_configure("error", foreground=t["error"])
 
         self.attach_bar.configure(bg=t["bg"], fg=t["accent"])
+        self.input_frame.configure(bg=t["bg"])
         input_bg = t["panel_bg"]
         self.attach_btn.configure(bg=input_bg, fg=t["text"], activebackground=t["accent"])
         self.input_box.configure(bg=input_bg, fg=t["text"], insertbackground=t["text"],
