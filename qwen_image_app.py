@@ -30,6 +30,16 @@ from ollama_image_agent import TOOLS, AVAILABLE_FUNCTIONS, ensure_ollama_running
 
 APP_TITLE = "Shewbox"
 
+SYSTEM_MESSAGE = {
+    "role": "system",
+    "content": (
+        "Never write /no_think, /think, <think>, or any other reasoning-mode "
+        "control token in your reply, and never mention or explain these "
+        "tokens or your own thinking/reasoning mode to the user. Just answer "
+        "or continue the conversation directly."
+    ),
+}
+
 if getattr(sys, "frozen", False):
     # Bundled read-only resources (icon) unpack to a temp dir each run.
     RESOURCE_DIR = sys._MEIPASS
@@ -661,14 +671,15 @@ class ChatApp:
     def run_turn(self, turn):
         model = turn["model"]
         messages = turn["messages"]
+        api_messages = [SYSTEM_MESSAGE] + messages
         tools = TOOLS if turn.get("image_tools", True) else None
         error = None
         try:
             ensure_ollama_running()
             try:
-                response = ollama.chat(model=model, messages=messages, tools=tools, think=False)
+                response = ollama.chat(model=model, messages=api_messages, tools=tools, think=False)
             except Exception:
-                response = ollama.chat(model=model, messages=messages, think=False)
+                response = ollama.chat(model=model, messages=api_messages, think=False)
             messages.append(response["message"])
 
             if response["message"].get("tool_calls"):
@@ -682,7 +693,7 @@ class ChatApp:
                     messages.append({"role": "tool", "content": result, "name": fn_name})
                     self.root.after(0, self.refresh_turn_if_current, turn["id"])
 
-                final = ollama.chat(model=model, messages=messages, think=False)
+                final = ollama.chat(model=model, messages=[SYSTEM_MESSAGE] + messages, think=False)
                 messages.append(final["message"])
         except Exception as e:
             error = str(e)
