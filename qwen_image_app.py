@@ -125,7 +125,12 @@ class ChatApp:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("1000x650")
+        win_w, win_h = 1000, 650
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = max(0, (screen_w - win_w) // 2)
+        y = max(0, (screen_h - win_h) // 2 - 20)
+        self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
         if os.path.exists(ICON_PATH):
             try:
                 self.root.iconbitmap(ICON_PATH)
