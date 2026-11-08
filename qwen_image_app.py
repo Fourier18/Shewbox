@@ -40,6 +40,16 @@ SYSTEM_MESSAGE = {
     ),
 }
 
+IMAGE_TOOLS_SYSTEM_PROMPT = (
+    "You are a general-purpose local chat assistant. You also have access to "
+    "generate_image and edit_image tools, but image generation is a minor side "
+    "feature, not your main purpose. Only call those tools, or mention that you "
+    "can create or edit images, when the user explicitly asks you to generate, "
+    "draw, create, or edit an image. Never bring up image generation on your "
+    "own, never offer to make an image unprompted, and never describe yourself "
+    "as an image model."
+)
+
 if getattr(sys, "frozen", False):
     # Bundled read-only resources (icon) unpack to a temp dir each run.
     RESOURCE_DIR = sys._MEIPASS
@@ -193,7 +203,7 @@ class ChatApp:
             self.available_models = ["qwen3:8b"]
         self.model_var = tk.StringVar(value=self.available_models[0] if self.available_models else "qwen3:8b")
         self.theme_var = tk.StringVar(value=self.theme_name)
-        self.image_tools_var = tk.BooleanVar(value=self._settings.get("image_tools_enabled", True))
+        self.image_tools_var = tk.BooleanVar(value=self._settings.get("image_tools_enabled", False))
 
         self._build_layout()
         self.apply_theme(self.theme_name)
@@ -671,8 +681,9 @@ class ChatApp:
     def run_turn(self, turn):
         model = turn["model"]
         messages = turn["messages"]
-        api_messages = [SYSTEM_MESSAGE] + messages
-        tools = TOOLS if turn.get("image_tools", True) else None
+        tools = TOOLS if turn.get("image_tools", False) else None
+        system_messages = [SYSTEM_MESSAGE] + ([{"role": "system", "content": IMAGE_TOOLS_SYSTEM_PROMPT}] if tools else [])
+        api_messages = system_messages + messages
         error = None
         try:
             ensure_ollama_running()
@@ -693,7 +704,7 @@ class ChatApp:
                     messages.append({"role": "tool", "content": result, "name": fn_name})
                     self.root.after(0, self.refresh_turn_if_current, turn["id"])
 
-                final = ollama.chat(model=model, messages=[SYSTEM_MESSAGE] + messages, think=False)
+                final = ollama.chat(model=model, messages=system_messages + messages, think=False)
                 messages.append(final["message"])
         except Exception as e:
             error = str(e)
