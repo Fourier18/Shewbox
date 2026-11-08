@@ -11,6 +11,8 @@ Theme tokens are ported 1:1 from the Tu-Torus project's theme.css /
 theme-dark.css / themes.css (same --bg/--panel-bg/--text/--accent model).
 """
 
+import ctypes
+import ctypes.wintypes
 import json
 import os
 import shutil
@@ -121,15 +123,36 @@ def _msg_to_plain(m):
     return d
 
 
+def _get_work_area():
+    """Windows work area (screen minus taskbar), not Tk's winfo_screen* which ignores it."""
+    try:
+        rect = ctypes.wintypes.RECT()
+        SPI_GETWORKAREA = 0x0030
+        ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0)
+        return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        return None
+
+
 class ChatApp:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_TITLE)
-        win_w, win_h = 1000, 650
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        x = max(0, (screen_w - win_w) // 2)
-        y = max(0, (screen_h - win_h) // 2 - 20)
+        margin = 100
+        work_area = _get_work_area()
+        if work_area:
+            left, top, right, bottom = work_area
+            avail_w, avail_h = right - left, bottom - top
+            win_w = min(1000, max(400, avail_w - margin))
+            win_h = min(650, max(300, avail_h - margin))
+            x = left + max(0, (avail_w - win_w) // 2)
+            y = top + max(0, (avail_h - win_h) // 2)
+        else:
+            win_w, win_h = 1000, 650
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
+            x = max(0, (screen_w - win_w) // 2)
+            y = max(0, (screen_h - win_h) // 2)
         self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
         if os.path.exists(ICON_PATH):
             try:
